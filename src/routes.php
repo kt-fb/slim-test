@@ -15,4 +15,5 @@ return function (App $app) {
         return $container->get('renderer')->render($response, 'index.phtml', $args);
     });
     require_once('blogs.php');
+    require_once('conventions.php');
 };

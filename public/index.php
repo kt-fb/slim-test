@@ -6,7 +6,11 @@ if (PHP_SAPI == 'cli-server') {
         return false;
     }
 }
-$db_config = [
+/**
+ * Definitions and global variables
+ */
+$CONVENTIONS_CSV = __DIR__ .'/../resources/conventions.csv';
+$DB_CONFIG = [
     'driver' => 'mysql',
     'user' => 'sroot',
     'password' => 'sroot@123',
@@ -14,10 +18,13 @@ $db_config = [
     'dbname' => 'sandeep',
     'charset' => 'utf8mb4'  
 ];
-
 $DB = require __DIR__ . '/../src/db-driver.php';
-$PDO = $DB($db_config);
+$PDO = $DB($DB_CONFIG);
 
+
+/**
+ * Autoload 
+ */
 require __DIR__ . '/../vendor/autoload.php';
 use Slim\Middleware\TokenAuthentication;
 session_start();
@@ -44,7 +51,6 @@ $app->add(new Tuupola\Middleware\HttpBasicAuthentication([
         "root" => "t00r"
     ]
 ]));
-
 
 
 $authenticator = function($request, TokenAuthentication $tokenAuth){
