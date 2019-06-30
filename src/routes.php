@@ -16,4 +16,5 @@ return function (App $app) {
     });
     require_once('blogs.php');
     require_once('conventions.php');
+    require_once('businesses.php');
 };
