@@ -52,12 +52,11 @@ $app->add(new Tuupola\Middleware\HttpBasicAuthentication([
     ]
 ]));
 
-
 $authenticator = function($request, TokenAuthentication $tokenAuth){
     $token = $tokenAuth->findToken($request);
     $secret = "thisisasecret";    
     if( $token !== $secret ){
-        throw new \Exception("Unaasds");
+        throw new \Exception("Illegal Access - Check Token");
     }
 };
 $error = function($request, $response, TokenAuthentication $tokenAuth) {

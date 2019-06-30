@@ -6,6 +6,6 @@ use Slim\Http\Response;
 
 require_once dirname(__FILE__).'/models/conventions.php';
 
-$app->post('/api/conventions/list', function (Request $request, Response $response, array $args) use ($container) {
+$app->post('/api/conventions/', function (Request $request, Response $response, array $args) use ($container) {
     return $response->withJson(get_all_conventions());
 });
