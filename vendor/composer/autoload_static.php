@@ -98,7 +98,6 @@ class ComposerStaticInitaf75564c0155e69f5ac28c9a8a42e0a6
         'Tuupola\\Middleware\\' => 
         array (
             0 => __DIR__ . '/..' . '/tuupola/callable-handler/src',
-            1 => __DIR__ . '/..' . '/tuupola/slim-basic-auth/src',
         ),
         'Tuupola\\Http\\Factory\\' => 
         array (
@@ -119,6 +118,7 @@ class ComposerStaticInitaf75564c0155e69f5ac28c9a8a42e0a6
         'Slim\\Middleware\\' => 
         array (
             0 => __DIR__ . '/..' . '/dyorg/slim-token-authentication/src',
+            1 => __DIR__ . '/..' . '/tuupola/slim-basic-auth/src',
         ),
         'Slim\\' => 
         array (

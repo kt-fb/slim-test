@@ -46,9 +46,10 @@ $middleware($app);
 $routes = require __DIR__ . '/../src/routes.php';
 $routes($app);
 
-$app->add(new Tuupola\Middleware\HttpBasicAuthentication([
+$app->add(new \Slim\Middleware\HttpBasicAuthentication([
     "users" => [
-        "root" => "t00r"
+        "root" => "t00r",
+        "somebody" => "passw0rd"
     ]
 ]));
 

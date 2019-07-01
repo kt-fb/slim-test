@@ -1,10 +1,9 @@
 <?php
-declare(strict_types=1);
 
 /*
  * This file is part of Slim HTTP Basic Authentication middleware
  *
- * Copyright (c) 2013-2018 Mika Tuupola
+ * Copyright (c) 2013-2017 Mika Tuupola
  *
  * Licensed under the MIT license:
  *   http://www.opensource.org/licenses/mit-license.php
@@ -14,11 +13,11 @@ declare(strict_types=1);
  *
  */
 
-namespace Tuupola\Middleware\HttpBasicAuthentication;
+namespace Slim\Middleware\HttpBasicAuthentication;
 
-use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Message\RequestInterface;
 
 interface RuleInterface
 {
-    public function __invoke(ServerRequestInterface $request): bool;
+    public function __invoke(RequestInterface $request);
 }

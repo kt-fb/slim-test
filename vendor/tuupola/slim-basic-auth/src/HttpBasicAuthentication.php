@@ -1,10 +1,9 @@
 <?php
-declare(strict_types=1);
 
 /*
  * This file is part of Slim HTTP Basic Authentication middleware
  *
- * Copyright (c) 2013-2018 Mika Tuupola
+ * Copyright (c) 2013-2017 Mika Tuupola
  *
  * Licensed under the MIT license:
  *   http://www.opensource.org/licenses/mit-license.php
@@ -14,35 +13,29 @@ declare(strict_types=1);
  *
  */
 
-namespace Tuupola\Middleware;
+namespace Slim\Middleware;
 
-use Closure;
-use Psr\Http\Server\MiddlewareInterface;
-use Psr\Http\Server\RequestHandlerInterface;
-use Psr\Http\Message\ServerRequestInterface;
+use Slim\Middleware\HttpBasicAuthentication\AuthenticatorInterface;
+use Slim\Middleware\HttpBasicAuthentication\ArrayAuthenticator;
+use Slim\Middleware\HttpBasicAuthentication\RequestMethodRule;
+use Slim\Middleware\HttpBasicAuthentication\RequestPathRule;
+
+use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
-use Tuupola\Http\Factory\ResponseFactory;
-use Tuupola\Middleware\DoublePassTrait;
-use Tuupola\Middleware\HttpBasicAuthentication\AuthenticatorInterface;
-use Tuupola\Middleware\HttpBasicAuthentication\ArrayAuthenticator;
-use Tuupola\Middleware\HttpBasicAuthentication\RequestMethodRule;
-use Tuupola\Middleware\HttpBasicAuthentication\RequestPathRule;
 
-final class HttpBasicAuthentication implements MiddlewareInterface
+class HttpBasicAuthentication
 {
-    use DoublePassTrait;
-
     private $rules;
     private $options = [
         "secure" => true,
         "relaxed" => ["localhost", "127.0.0.1"],
         "users" => null,
         "path" => null,
-        "ignore" => null,
+        "passthrough" => null,
         "realm" => "Protected",
+        "environment" => "HTTP_AUTHORIZATION",
         "authenticator" => null,
-        "before" => null,
-        "after" => null,
+        "callback" => null,
         "error" => null
     ];
 
@@ -63,16 +56,16 @@ final class HttpBasicAuthentication implements MiddlewareInterface
 
         /* If nothing was passed in options add default rules. */
         if (!isset($options["rules"])) {
-            $this->rules->push(new RequestMethodRule([
-                "ignore" => ["OPTIONS"]
+            $this->addRule(new RequestMethodRule([
+                "passthrough" => ["OPTIONS"]
             ]));
         }
 
         /* If path was given in easy mode add rule for it. */
         if (null !== $this->options["path"]) {
-            $this->rules->push(new RequestPathRule([
+            $this->addRule(new RequestPathRule([
                 "path" => $this->options["path"],
-                "ignore" => $this->options["ignore"]
+                "passthrough" => $this->options["passthrough"]
             ]));
         }
 
@@ -83,10 +76,7 @@ final class HttpBasicAuthentication implements MiddlewareInterface
         }
     }
 
-    /**
-     * Process a request in PSR-15 style and return a response.
-     */
-    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
+    public function __invoke(RequestInterface $request, ResponseInterface $response, callable $next)
     {
         $host = $request->getUri()->getHost();
         $scheme = $request->getUri()->getScheme();
@@ -94,24 +84,12 @@ final class HttpBasicAuthentication implements MiddlewareInterface
 
         /* If rules say we should not authenticate call next and return. */
         if (false === $this->shouldAuthenticate($request)) {
-            return $handler->handle($request);
+            return $next($request, $response);
         }
 
         /* HTTP allowed only if secure is false or server is in relaxed array. */
         if ("https" !== $scheme && true === $this->options["secure"]) {
-            $allowedHost = in_array($host, $this->options["relaxed"]);
-
-            /* if 'headers' is in the 'relaxed' key, then we check for forwarding */
-            $allowedForward = false;
-            if (in_array("headers", $this->options["relaxed"])) {
-                if ($request->getHeaderLine("X-Forwarded-Proto") === "https"
-                    && $request->getHeaderLine('X-Forwarded-Port') === "443"
-                ) {
-                    $allowedForward = true;
-                }
-            }
-
-            if (!($allowedHost || $allowedForward)) {
+            if (!in_array($host, $this->options["relaxed"])) {
                 $message = sprintf(
                     "Insecure use of middleware over %s denied by configuration.",
                     strtoupper($scheme)
@@ -121,77 +99,69 @@ final class HttpBasicAuthentication implements MiddlewareInterface
         }
 
         /* Just in case. */
-        $params = ["user" => null, "password" => null];
+        $user = false;
+        $password = false;
 
-        if (preg_match("/Basic\s+(.*)$/i", $request->getHeaderLine("Authorization"), $matches)) {
-            $explodedCredential = explode(":", base64_decode($matches[1]), 2);
-            if (count($explodedCredential) == 2) {
-                list($params["user"], $params["password"]) = $explodedCredential;
+        /* If using PHP in CGI mode. */
+        if (isset($server_params[$this->options["environment"]])) {
+            if (preg_match("/Basic\s+(.*)$/i", $server_params[$this->options["environment"]], $matches)) {
+                list($user, $password) = explode(":", base64_decode($matches[1]), 2);
+            }
+        } else {
+            if (isset($server_params["PHP_AUTH_USER"])) {
+                $user = $server_params["PHP_AUTH_USER"];
+            }
+            if (isset($server_params["PHP_AUTH_PW"])) {
+                $password = $server_params["PHP_AUTH_PW"];
             }
         }
+
+        $params = ["user" => $user, "password" => $password];
 
         /* Check if user authenticates. */
         if (false === $this->options["authenticator"]($params)) {
             /* Set response headers before giving it to error callback */
-            $response = (new ResponseFactory)
-                ->createResponse(401)
-                ->withHeader(
-                    "WWW-Authenticate",
-                    sprintf('Basic realm="%s"', $this->options["realm"])
-                );
+            $response = $response
+                ->withStatus(401)
+                ->withHeader("WWW-Authenticate", sprintf('Basic realm="%s"', $this->options["realm"]));
 
-            return $this->processError($response, [
-                "message" => "Authentication failed"
+            return $this->error($request, $response, [
+                "message" => "Authentication failed",
+                "user" => $user,
             ]);
         }
 
-        /* Modify $request before calling next middleware. */
-        if (is_callable($this->options["before"])) {
-            $response = (new ResponseFactory)->createResponse(200);
-            $before_request = $this->options["before"]($request, $params);
-            if ($before_request instanceof ServerRequestInterface) {
-                $request = $before_request;
+        /* If callback returns false return with 401 Unauthorized. */
+        if (is_callable($this->options["callback"])) {
+            if (false === $this->options["callback"]($request, $response, $params)) {
+                /* Set response headers before giving it to error callback */
+                $response = $response
+                    ->withStatus(401)
+                    ->withHeader("WWW-Authenticate", sprintf('Basic realm="%s"', $this->options["realm"]));
+
+                return $this->error($request, $response, [
+                    "message" => "Callback returned false",
+                    "user" => $user
+                ]);
             }
         }
+
 
         /* Everything ok, call next middleware. */
-        $response = $handler->handle($request);
-
-        /* Modify $response before returning. */
-        if (is_callable($this->options["after"])) {
-            $after_response = $this->options["after"]($response, $params);
-            if ($after_response instanceof ResponseInterface) {
-                return $after_response;
-            }
-        }
-
-        return $response;
+        return $next($request, $response);
     }
 
-    /**
-     * Hydrate all options from given array.
-     */
-    private function hydrate(array $data = []): void
+    private function hydrate($data = [])
     {
         foreach ($data as $key => $value) {
-            /* https://github.com/facebook/hhvm/issues/6368 */
-            $key = str_replace(".", " ", $key);
-            $method = lcfirst(ucwords($key));
-            $method = str_replace(" ", "", $method);
+            $method = "set" . ucfirst($key);
             if (method_exists($this, $method)) {
-                /* Try to use setter */
                 call_user_func([$this, $method], $value);
-            } else {
-                /* Or fallback to setting option directly */
-                $this->options[$key] = $value;
             }
         }
     }
 
-    /**
-     * Test if current request should be authenticated.
-     */
-    private function shouldAuthenticate(ServerRequestInterface $request): bool
+    private function shouldAuthenticate(RequestInterface $request)
     {
         /* If any of the rules in stack return false will not authenticate */
         foreach ($this->rules as $callable) {
@@ -203,131 +173,194 @@ final class HttpBasicAuthentication implements MiddlewareInterface
     }
 
     /**
-     * Execute the error handler.
+     * Call the error handler if it exists
+     *
+     * @return void
      */
-    private function processError(ResponseInterface $response, array $arguments): ResponseInterface
+    public function error(RequestInterface $request, ResponseInterface $response, $arguments)
     {
         if (is_callable($this->options["error"])) {
-            $handler_response = $this->options["error"]($response, $arguments);
-            if ($handler_response instanceof ResponseInterface) {
+            $handler_response = $this->options["error"]($request, $response, $arguments);
+            if (is_a($handler_response, "\Psr\Http\Message\ResponseInterface")) {
                 return $handler_response;
             }
         }
         return $response;
     }
 
-    /**
-     * Set path where middleware should bind to.
-     */
-    private function path($path): void
+    public function getAuthenticator()
     {
-        $this->options["path"] = (array) $path;
-    }
-    /**
-     * Set path which middleware ignores.
-     */
-    private function ignore($ignore): void
-    {
-        $this->options["ignore"] = (array) $ignore;
+        return $this->options["authenticator"];
     }
 
-    /**
-     * Set the authenticator.
-     */
-    private function authenticator(callable $authenticator): void
+    public function setAuthenticator($authenticator)
     {
         $this->options["authenticator"] = $authenticator;
+        return $this;
     }
 
-    /**
-     * Set the users array.
-     */
-    private function users(array $users): void
+    public function getUsers()
+    {
+        return $this->options["users"];
+    }
+
+    /* Do not mess with users right now */
+    private function setUsers($users)
     {
         $this->options["users"] = $users;
+        return $this;
     }
 
-    /**
-     * Set the secure flag.
-     */
-    private function secure(bool $secure): void
+    public function getPath()
     {
-        $this->options["secure"] = $secure;
+        return $this->options["path"];
+    }
+
+    /* Do not mess with path right now */
+    private function setPath($path)
+    {
+        $this->options["path"] = $path;
+        return $this;
+    }
+
+    public function getPassthrough()
+    {
+        return $this->options["passthrough"];
+    }
+
+    private function setPassthrough($passthrough)
+    {
+        $this->options["passthrough"] = $passthrough;
+        return $this;
+    }
+
+    public function getRealm()
+    {
+        return $this->options["realm"];
+    }
+
+    public function setRealm($realm)
+    {
+        $this->options["realm"] = $realm;
+        return $this;
+    }
+
+    public function getEnvironment()
+    {
+        return $this->options["environment"];
+    }
+
+    public function setEnvironment($environment)
+    {
+        $this->options["environment"] = $environment;
+        return $this;
     }
 
     /**
-     * Set hosts where secure rule is relaxed.
+     * Get the secure flag
+     *
+     * @return boolean
      */
-    private function relaxed(array $relaxed): void
+    public function getSecure()
+    {
+        return $this->options["secure"];
+    }
+
+    /**
+     * Set the secure flag
+     *
+     * @return self
+     */
+    public function setSecure($secure)
+    {
+        $this->options["secure"] = !!$secure;
+        return $this;
+    }
+
+    /**
+     * Get hosts where secure rule is relaxed
+     *
+     * @return string
+     */
+    public function getRelaxed()
+    {
+        return $this->options["relaxed"];
+    }
+
+    /**
+     * Set hosts where secure rule is relaxed
+     *
+     * @return self
+     */
+    public function setRelaxed(array $relaxed)
     {
         $this->options["relaxed"] = $relaxed;
+        return $this;
     }
 
     /**
-     * Set the handler which is called before other middlewares.
+     * Get the callback
+     *
+     * @return string
      */
-    private function before(Closure $before): void
+    public function getCallback()
     {
-        $this->options["before"] = $before->bindTo($this);
+        return $this->options["callback"];
     }
 
     /**
-     * Set the handler which is called after other middlewares.
+     * Set the callback
+     *
+     * @return self
      */
-    private function after(Closure $after): void
+    public function setCallback($callback)
     {
-        $this->options["after"] = $after->bindTo($this);
+        $this->options["callback"] = $callback;
+        return $this;
     }
 
     /**
-     * Set the handler which is if authentication fails.
+     * Get the error handler
+     *
+     * @return string
      */
-    private function error(callable $error): void
+    public function getError()
+    {
+        return $this->options["error"];
+    }
+
+    /**
+     * Set the error handler
+     *
+     * @return self
+     */
+    public function setError($error)
     {
         $this->options["error"] = $error;
+        return $this;
     }
 
-    /**
-     * Set the rules
-     */
-    private function rules(array $rules)
+    public function getRules()
     {
-        $this->rules = $rules;
+        return $this->rules;
     }
 
-    /**
-     * Set the rules which determine if current request should be authenticated.
-     *
-     * Rules must be callables which return a boolean. If any of the rules return
-     * boolean false current request will not be authenticated.
-     *
-     * @param array $rules
-     */
-    public function withRules(array $rules): self
+    public function setRules(array $rules)
     {
-        $new = clone $this;
         /* Clear the stack */
-        unset($new->rules);
-        $new->rules = new \SplStack;
+        unset($this->rules);
+        $this->rules = new \SplStack;
 
         /* Add the rules */
         foreach ($rules as $callable) {
-            $new = $new->addRule($callable);
+            $this->addRule($callable);
         }
-        return $new;
+        return $this;
     }
 
-    /**
-     * Add a rule to the rules stack.
-     *
-     * Rules must be callables which return a boolean. If any of the rules return
-     * boolean false current request will not be authenticated.
-     */
-    public function addRule(callable $callable): self
+    public function addRule($callable)
     {
-        $new = clone $this;
-        $new->rules = clone $this->rules;
-        $new->rules->push($callable);
-        return $new;
+        $this->rules->push($callable);
+        return $this;
     }
 }

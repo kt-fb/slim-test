@@ -1,10 +1,9 @@
 <?php
-declare(strict_types=1);
 
 /*
  * This file is part of Slim HTTP Basic Authentication middleware
  *
- * Copyright (c) 2013-2018 Mika Tuupola
+ * Copyright (c) 2013-2017 Mika Tuupola
  *
  * Licensed under the MIT license:
  *   http://www.opensource.org/licenses/mit-license.php
@@ -14,38 +13,48 @@ declare(strict_types=1);
  *
  */
 
-namespace Tuupola\Middleware\HttpBasicAuthentication;
+namespace Slim\Middleware\HttpBasicAuthentication;
 
-use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Message\RequestInterface;
 
 /**
  * Rule to decide by request path whether the request should be authenticated or not.
  */
 
-final class RequestPathRule implements RuleInterface
+class RequestPathRule implements RuleInterface
 {
     /**
-     * Stores all the options passed to the rule.
+     * Stores all the options passed to the rule
      */
-    private $options = [
+    protected $options = [
         "path" => ["/"],
-        "ignore" => []
+        "passthrough" => []
     ];
 
+    /**
+     * Create a new rule instance
+     *
+     * @param string[] $options
+     * @return void
+     */
     public function __construct($options = [])
     {
         $this->options = array_merge($this->options, $options);
     }
 
-    public function __invoke(ServerRequestInterface $request): bool
+    /**
+     * @param \Psr\Http\Message\RequestInterface $request
+     * @return boolean
+     */
+    public function __invoke(RequestInterface $request)
     {
         $uri = "/" . $request->getUri()->getPath();
         $uri = preg_replace("#/+#", "/", $uri);
 
-        /* If request path is matches ignore should not authenticate. */
-        foreach ((array)$this->options["ignore"] as $ignore) {
-            $ignore = rtrim($ignore, "/");
-            if (!!preg_match("@^{$ignore}(/.*)?$@", $uri)) {
+        /* If request path is matches passthrough should not authenticate. */
+        foreach ((array)$this->options["passthrough"] as $passthrough) {
+            $passthrough = rtrim($passthrough, "/");
+            if (!!preg_match("@^{$passthrough}(/.*)?$@", $uri)) {
                 return false;
             }
         }
