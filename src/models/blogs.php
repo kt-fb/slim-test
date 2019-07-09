@@ -12,7 +12,7 @@ function get_blog_list($args){
     $page_number = (int)$args['page_number'];
     $entry_per_page = $args['entry_per_page'];
     $start_limit = $entry_per_page*($page_number - 1) + 1;
-    $stmt = $PDO->prepare('SELECT * FROM `blog`  ORDER BY `blog`.`date`  DESC LIMIT ?,?');
+    $stmt = $PDO->prepare('SELECT * FROM `blog` WHERE status = 1 ORDER BY `blog`.`date`  DESC LIMIT ?,?');
     $stmt->execute([ $start_limit , $entry_per_page ]);
     
     $blogs = $stmt->fetchAll();
